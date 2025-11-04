@@ -1,0 +1,5 @@
+{
+  "name": "PKP.ai",
+  "description": "An advanced AI chatbot with auto chat renaming, Google Search, image generation, and an integrated presentation mode. Chat with the AI, get up-to-date answers, create images, and even generate and present slide decks directly within the app.",
+  "requestFramePermissions": []
+}
