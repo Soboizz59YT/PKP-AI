@@ -13,6 +13,10 @@ export interface Message {
   timestamp: string;
   status?: 'in-progress' | 'complete';
   mode?: 'text' | 'image' | 'presentation';
+  attachment?: {
+    data: string; // base64 encoded data
+    mimeType: string;
+  };
 }
 
 export interface ChatSession {

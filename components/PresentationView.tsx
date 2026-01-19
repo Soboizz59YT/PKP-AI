@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { CloseIcon } from './icons';
 
@@ -8,12 +9,14 @@ interface PresentationViewProps {
 
 const PresentationView: React.FC<PresentationViewProps> = ({ htmlContent, onExit }) => {
   return (
-    <div className="fixed inset-0 bg-black flex flex-col text-white z-50">
+    <div className="fixed inset-0 bg-black flex flex-col text-white z-[60]">
       <iframe
+        key={htmlContent.length} // Force re-render if content length changes significantly to prevent stale state
         srcDoc={htmlContent}
         title="Presentation"
         className="w-full h-full border-0"
-        sandbox="allow-scripts allow-same-origin" // allow scripts for animations and ensure proper functioning
+        scrolling="no"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
       />
       <div className="absolute top-4 right-4">
         <button onClick={onExit} className="p-2 rounded-full bg-black/50 hover:bg-black/80 transition-colors">

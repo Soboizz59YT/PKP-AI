@@ -1,15 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ChatView from './components/ChatView';
-import PresentationView from './components/PresentationView';
-import { NewChatIcon, PkpIcon, AiIcon, CloseIcon, MenuIcon } from './components/icons';
+import { NewChatIcon, PkpIcon, AiIcon, CloseIcon, MenuIcon, MoreVerticalIcon, EditIcon, TrashIcon, CheckIcon } from './components/icons';
 import type { ChatSession, Message, Source } from './types';
 import { generateTitle } from './services/geminiService';
 
 const App: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [presentationContent, setPresentationContent] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [openMenuSessionId, setOpenMenuSessionId] = useState<string | null>(null);
+  const [tempTitle, setTempTitle] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 768px)');
@@ -17,6 +20,30 @@ const App: React.FC = () => {
     handleResize(); // Set initial state
     mediaQuery.addEventListener('change', handleResize);
     return () => mediaQuery.removeEventListener('change', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+        if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+            setOpenMenuSessionId(null);
+        }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const createNewSession = useCallback(() => {
+    const newSession: ChatSession = {
+      id: Date.now().toString(),
+      title: 'New Chat',
+      messages: [],
+      createdAt: new Date().toISOString(),
+    };
+    setSessions((prev) => [newSession, ...prev]);
+    setActiveSessionId(newSession.id);
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -39,12 +66,9 @@ const App: React.FC = () => {
         setActiveSessionId(loadedSessions[0].id);
       }
     } else {
-      // If no sessions exist, create a new one to start.
-      const newSession: ChatSession = { id: Date.now().toString(), title: 'New Chat', messages: [], createdAt: new Date().toISOString() };
-      setSessions([newSession]);
-      setActiveSessionId(newSession.id);
+      createNewSession();
     }
-  }, []);
+  }, [createNewSession]);
 
   useEffect(() => {
     try {
@@ -60,20 +84,17 @@ const App: React.FC = () => {
       if (error instanceof DOMException && (error.name === 'QuotaExceededError' || error.code === 22)) {
         console.warn("LocalStorage quota exceeded. Removing the oldest session to make space.");
         
-        // Sort sessions by date to find the oldest one
         const sortedSessions = [...sessions].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         
         if (sortedSessions.length > 0) {
           const oldestSessionId = sortedSessions[0].id;
           const prunedSessions = sessions.filter(s => s.id !== oldestSessionId);
           
-          // If the active session was the one we just deleted, select the new latest session as active.
           if (activeSessionId === oldestSessionId) {
             const newestFirst = prunedSessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             setActiveSessionId(newestFirst.length > 0 ? newestFirst[0].id : null);
           }
           
-          // This state update will trigger the useEffect again to retry saving the pruned list.
           setSessions(prunedSessions);
         }
       } else {
@@ -81,46 +102,31 @@ const App: React.FC = () => {
       }
     }
   }, [sessions, activeSessionId]);
-
-  const handleStartPresentation = useCallback((htmlContent: string) => {
-    setPresentationContent(htmlContent);
-  }, []);
-
-
-  const createNewSession = () => {
-    const newSession: ChatSession = {
-      id: Date.now().toString(),
-      title: 'New Chat',
-      messages: [],
-      createdAt: new Date().toISOString(),
-    };
-    setSessions((prev) => [newSession, ...prev]);
-    setActiveSessionId(newSession.id);
-    if (window.innerWidth < 768) {
-      setIsSidebarOpen(false);
-    }
-  };
   
-  const updateSession = useCallback(async (sessionId: string, updates: Partial<ChatSession>) => {
-    const sessionToUpdate = sessions.find(s => s.id === sessionId);
-    if (!sessionToUpdate) return;
-    
-    // Check if we are adding the very first message from the user.
-    const isFirstUserMessage = sessionToUpdate.messages.length === 0 && updates.messages && updates.messages.length > 0 && updates.messages[0].role === 'user';
-    
-    let finalUpdates = { ...updates };
-    if (isFirstUserMessage) {
-        const firstPrompt = updates.messages![0].content;
-        const newTitle = await generateTitle(firstPrompt);
-        finalUpdates.title = newTitle;
-    }
-
+  // Effect for auto-generating title for new chats
+  useEffect(() => {
+    const renameSessionIfNeeded = async () => {
+        const sessionToUpdate = sessions.find(s => s.id === activeSessionId);
+        
+        // Auto-rename if it's a new chat with its first user message and placeholder.
+        if (sessionToUpdate && sessionToUpdate.title === 'New Chat' && sessionToUpdate.messages.length === 2 && sessionToUpdate.messages[0].role === 'user') {
+            const firstPrompt = sessionToUpdate.messages[0].content;
+            if (firstPrompt) {
+                const newTitle = await generateTitle(firstPrompt);
+                setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: newTitle } : s));
+            }
+        }
+    };
+    renameSessionIfNeeded();
+  }, [sessions, activeSessionId]);
+  
+  const updateSession = useCallback((sessionId: string, updates: Partial<ChatSession>) => {
     setSessions((prevSessions) =>
       prevSessions.map((session) =>
-        session.id === sessionId ? { ...session, ...finalUpdates } : session
+        session.id === sessionId ? { ...session, ...updates } : session
       )
     );
-  }, [sessions]);
+  }, []);
 
   const streamToSession = useCallback((sessionId: string, messageId: string, chunk: { text?: string; sources?: Source[] }) => {
     setSessions(prev => prev.map(s => {
@@ -146,13 +152,46 @@ const App: React.FC = () => {
       }));
   }, []);
 
+  const handleCancelGeneration = (sessionId: string) => {
+    setSessions(prev => prev.map(s => {
+        if (s.id !== sessionId) return s;
+        // Filter out any messages that are currently in-progress
+        return { ...s, messages: s.messages.filter(m => m.status !== 'in-progress') };
+    }));
+  };
+
+  const handleDeleteSession = (sessionIdToDelete: string) => {
+    if (!window.confirm("Are you sure you want to delete this chat? This action cannot be undone.")) return;
+    
+    const newSessions = sessions.filter(s => s.id !== sessionIdToDelete);
+
+    if (newSessions.length === 0) {
+        createNewSession();
+    } else {
+        if (activeSessionId === sessionIdToDelete) {
+            setActiveSessionId(newSessions[0].id);
+        }
+        setSessions(newSessions);
+    }
+  };
+  
+  const handleStartRename = (session: ChatSession) => {
+    setRenamingSessionId(session.id);
+    setTempTitle(session.title);
+    setOpenMenuSessionId(null);
+  };
+  
+  const handleSaveRename = (sessionId: string) => {
+    if (tempTitle.trim()) {
+        setSessions(prev =>
+            prev.map(s => (s.id === sessionId ? { ...s, title: tempTitle.trim() } : s))
+        );
+    }
+    setRenamingSessionId(null);
+  };
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const isInitialView = activeSession?.messages.length === 0;
-
-  if (presentationContent) {
-    return <PresentationView htmlContent={presentationContent} onExit={() => setPresentationContent(null)} />;
-  }
 
   return (
     <div className="relative h-screen font-sans bg-black flex overflow-hidden">
@@ -175,24 +214,62 @@ const App: React.FC = () => {
                 New Chat
             </button>
         </div>
-        <nav className="flex-grow overflow-y-auto p-2 space-y-1">
+        <nav className="flex-grow overflow-y-auto p-2 space-y-1 pb-40">
           {sessions.map((session) => (
-            <a
-              key={session.id}
-              href="#"
-              onClick={(e) => {
-                  e.preventDefault();
-                  setActiveSessionId(session.id);
-                  if (window.innerWidth < 768) {
-                    setIsSidebarOpen(false);
-                  }
-              }}
-              className={`block w-full text-left px-3 py-2 rounded-md text-sm truncate transition-colors ${
-                session.id === activeSessionId ? 'bg-gray-700' : 'hover:bg-gray-800'
-              }`}
-            >
-              {session.title}
-            </a>
+            <div key={session.id} className="relative group">
+              {renamingSessionId === session.id ? (
+                <div className="flex items-center gap-2 p-1">
+                  <input
+                    type="text"
+                    value={tempTitle}
+                    onChange={(e) => setTempTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRename(session.id);
+                        if (e.key === 'Escape') setRenamingSessionId(null);
+                    }}
+                    onBlur={() => handleSaveRename(session.id)}
+                    className="w-full bg-gray-600 text-white px-2 py-1.5 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                  <button onClick={() => handleSaveRename(session.id)} className="p-1 text-gray-300 hover:text-white">
+                      <CheckIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="#"
+                  onClick={(e) => {
+                      e.preventDefault();
+                      setActiveSessionId(session.id);
+                      if (window.innerWidth < 768) {
+                        setIsSidebarOpen(false);
+                      }
+                  }}
+                  className={`block w-full text-left pl-3 pr-8 py-2 rounded-md text-sm truncate transition-colors ${
+                    session.id === activeSessionId ? 'bg-gray-700' : 'hover:bg-gray-800'
+                  }`}
+                >
+                  {session.title}
+                </a>
+              )}
+              {renamingSessionId !== session.id && (
+                <div className="absolute top-1/2 -translate-y-1/2 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => setOpenMenuSessionId(session.id === openMenuSessionId ? null : session.id)} className="p-1 text-gray-400 hover:text-white rounded-md">
+                    <MoreVerticalIcon className="w-4 h-4" />
+                  </button>
+                  {openMenuSessionId === session.id && (
+                    <div ref={menuRef} className="absolute top-full mt-1 right-0 w-32 bg-gray-950/80 backdrop-blur-md border border-gray-700 rounded-lg shadow-2xl z-10 animate-fade-in-up">
+                      <button onClick={(e) => { e.stopPropagation(); handleStartRename(session); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-800 transition-colors rounded-t-lg">
+                          <EditIcon className="w-4 h-4" /> Rename
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-red-400 hover:bg-gray-800 transition-colors rounded-b-lg">
+                          <TrashIcon className="w-4 h-4" /> Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           ))}
         </nav>
       </aside>
@@ -216,7 +293,7 @@ const App: React.FC = () => {
               updateSession={updateSession} 
               streamToSession={streamToSession} 
               updateMessageInSession={updateMessageInSession}
-              onStartPresentation={handleStartPresentation} 
+              onCancelGeneration={handleCancelGeneration}
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-gray-900/50">
